@@ -1,0 +1,11 @@
+[project]
+name = "radar-signal-stimulation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib==3.7.2",
+    "numpy==1.26.4",
+    "scipy>=1.15.2",
+]

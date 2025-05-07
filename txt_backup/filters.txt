@@ -1,0 +1,392 @@
+# filters.py
+"""
+滤波器模块
+"""
+from scipy.signal import butter, filtfilt, freqz, sosfiltfilt, sosfreqz
+import numpy as np
+import json
+import matplotlib.pyplot as plt
+
+# --- 中文显示配置 ---
+try:
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    print("[模块二] 尝试设置字体为 SimHei")
+except Exception as e:
+    print(f"[模块二] 设置字体 SimHei 失败: {e}")
+# --- 中文显示配置结束 ---
+
+def butter_bandpass(lowcut, highcut, fs, order=5):
+    nyq = 0.5 * fs
+    if not (0 < lowcut < nyq and 0 < highcut < nyq and lowcut < highcut):
+        print(f"警告: 滤波器截止频率设置不合理。lowcut={lowcut}, highcut={highcut}, nyq={nyq}, fs={fs}")
+        print("  要求: 0 < lowcut < nyq, 0 < highcut < nyq, lowcut < highcut")
+        return None
+
+    low = lowcut / nyq
+    high = highcut / nyq
+    if not (0 < low < 1 and 0 < high < 1 and low < high):
+        print(f"警告: 归一化截止频率不合理。low_norm={low}, high_norm={high}")
+        return None
+
+    try:
+        sos = butter(order, [lowcut, highcut], btype='band', fs=fs, output='sos')
+        return sos
+    except ValueError as e:
+        print(f"错误: scipy.signal.butter 设计滤波器失败: {e}")
+        print(f"  参数: order={order}, Wn=[{lowcut}, {highcut}], btype='band', fs={fs}, output='sos'")
+        return None
+
+
+def butter_bandpass_filter(data, lowcut, highcut, fs, order=5):
+    sos = butter_bandpass(lowcut, highcut, fs, order=order)
+    if sos is None:
+        print("错误: 滤波器设计失败 (sos为None)，在 butter_bandpass_filter 中返回原始数据。")
+        return data
+    if not isinstance(sos, np.ndarray) or sos.size == 0 or np.any(np.isnan(sos)):
+        print("错误: 滤波器SOS系数无效 (空或NaN)，在 butter_bandpass_filter 中返回原始数据。")
+        return data
+    try:
+        y = sosfiltfilt(sos, data)
+        return y
+    except ValueError as e:
+        print(f"错误: scipy.signal.sosfiltfilt 应用滤波器失败: {e}")
+        print("  可能是由于滤波器SOS系数或数据问题。返回原始数据。")
+        return data
+
+
+def compute_power_spectrum(signal, fs):
+    N = len(signal)
+    if N == 0:
+        print("警告: compute_power_spectrum 接收到空信号。")
+        return np.array([]), np.array([])
+
+    yf = np.fft.fft(signal)
+    xf = np.fft.fftfreq(N, 1 / fs)
+
+    yf_half_abs = np.abs(yf[:N // 2 + 1])
+    xf_half = xf[:N // 2 + 1]
+
+    amp_spectrum = yf_half_abs / N
+    if N > 0:
+        if N % 2 == 0:
+            if N//2 > 0:
+                 amp_spectrum[1:N//2] *= 2
+        else:
+            if len(amp_spectrum) > 1:
+                amp_spectrum[1:] *= 2
+    power_spectrum_final = amp_spectrum**2
+    return xf_half, power_spectrum_final
+
+def generate_signal_from_params(t_axis, label, fs_signal):
+    params = {}
+    try:
+        parts = label.split(',')
+        for part in parts:
+            key_val = part.split('=')
+            if len(key_val) == 2:
+                key = key_val[0].strip()
+                val_str = key_val[1].strip()
+                if 'Hz' in val_str:
+                    val_str = val_str.replace('Hz', '')
+                params[key] = float(val_str)
+    except Exception as e:
+        print(f"  [生成长信号警告] 无法从标签 '{label}' 解析参数: {e}. 将使用默认值。")
+
+    frequency = params.get('F', 0.0)
+    amplitude = params.get('Amplitude', 1.0)
+    mean_val = params.get('Mean', 0.0) # Interpreted as DC offset for the sine wave
+    std_dev = params.get('Std', 0.0)   # Interpreted as std dev for zero-mean noise
+
+    # print(f"  [生成长信号] '{label}': F={frequency:.1f}Hz, Amp={amplitude:.1f}, DC={mean_val:.1f}, NoiseStd={std_dev:.1f}")
+    
+    signal_with_dc = mean_val + amplitude * np.sin(2 * np.pi * frequency * t_axis)
+    noise_component = np.random.normal(0, std_dev, len(t_axis))
+    
+    return signal_with_dc + noise_component
+
+
+if __name__ == '__main__':
+    print("\n--- 滤波器模块独立测试 (从文件读取数据并滤波) ---")
+
+    NORMALIZE_SPECTRUM_DISPLAY = False
+    LOWCUT_FILTER = 4.0
+    HIGHCUT_FILTER = 6.0
+    ORDER_FILTER = 5
+    EXTENDED_TIME_DURATION = 5.0
+
+    input_filename = "signal_to_filters.txt"
+    output_filename_for_spec = "filters_to_spec.txt" # New output filename
+
+    try:
+        with open(input_filename, 'r') as f:
+            loaded_data = json.load(f)
+        print(f"从 {input_filename} 加载数据成功。")
+    except FileNotFoundError:
+        print(f"错误: 文件 {input_filename} 未找到。"); exit()
+    except json.JSONDecodeError:
+        print(f"错误: 文件 {input_filename} JSON格式无效。"); exit()
+    except Exception as e:
+        print(f"加载数据时发生未知错误: {e}"); exit()
+
+    if not loaded_data or "time_axis" not in loaded_data or "signals" not in loaded_data or "fs" not in loaded_data:
+        print("错误: 加载的数据格式不正确。"); exit()
+
+    time_axis_original_from_file = np.array(loaded_data["time_axis"])
+    signals_info_list = loaded_data["signals"]
+    FS_FILTER = loaded_data["fs"]
+
+    if not signals_info_list: print("文件中没有信号数据。"); exit()
+    print(f"采样率 FS_FILTER: {FS_FILTER} Hz")
+    print(f"滤波器参数: 通带 {LOWCUT_FILTER}-{HIGHCUT_FILTER} Hz, 阶数 {ORDER_FILTER}")
+    if NORMALIZE_SPECTRUM_DISPLAY:
+        print("注意: 功率谱图将显示归一化的功率谱。")
+    else:
+        print("注意: 功率谱图将显示绝对功率谱。")
+
+    # --- Data structure for output file ---
+    output_data_for_spec = {
+        "fs": FS_FILTER,
+        "filter_params": {
+            "lowcut": LOWCUT_FILTER,
+            "highcut": HIGHCUT_FILTER,
+            "order": ORDER_FILTER,
+            "type": "butterworth_bandpass_sos" # Or more general 'butter_bandpass'
+        },
+        "time_axis": time_axis_original_from_file.tolist(), # Save the original time axis
+        "filtered_signals": []
+    }
+    # --- End data structure for output file ---
+
+    fig_main, axes_main = plt.subplots(2, 2, figsize=(17, 10))
+    fig_main.suptitle(f"主信号分析 (滤波器: {LOWCUT_FILTER}-{HIGHCUT_FILTER}Hz, {ORDER_FILTER}阶, 原始时长)", fontsize=16)
+    # ... (ax_original_time_main, ax_filtered_time_main, etc. setup as before) ...
+    ax_original_time_main = axes_main[0, 0]
+    ax_filtered_time_main = axes_main[0, 1]
+    ax_combined_spectrum_main = axes_main[1, 0]
+    ax_filter_response_main = axes_main[1, 1]
+
+    ax_original_time_main.set_title("1. 原始信号 (时域 - 所有信号, 文件时长)")
+    ax_original_time_main.set_xlabel("时间 (s)"); ax_original_time_main.set_ylabel("幅值"); ax_original_time_main.grid(True)
+
+    ax_filtered_time_main.set_title(f"2. 滤波后信号 (时域 - 所有信号, 文件时长)")
+    ax_filtered_time_main.set_xlabel("时间 (s)"); ax_filtered_time_main.set_ylabel("幅值"); ax_filtered_time_main.grid(True)
+    
+    colors = plt.cm.get_cmap('tab10', len(signals_info_list))
+
+    for i, signal_info in enumerate(signals_info_list):
+        original_signal_data = np.array(signal_info["data"])
+        label_from_file = signal_info.get("label", f"信号 {i + 1}")
+
+        current_time_axis = time_axis_original_from_file
+        if len(time_axis_original_from_file) > len(original_signal_data):
+            current_time_axis = time_axis_original_from_file[:len(original_signal_data)]
+        elif len(time_axis_original_from_file) < len(original_signal_data):
+            print(f"警告: 信号 '{label_from_file}' 数据长度 ({len(original_signal_data)}) 大于时间轴长度 ({len(time_axis_original_from_file)}). 将截断数据进行绘图。")
+            original_signal_data = original_signal_data[:len(time_axis_original_from_file)]
+
+        ax_original_time_main.plot(current_time_axis, original_signal_data, label=label_from_file, color=colors(i), alpha=0.7)
+        
+        filtered_signal = butter_bandpass_filter(original_signal_data, LOWCUT_FILTER, HIGHCUT_FILTER, FS_FILTER, order=ORDER_FILTER)
+        ax_filtered_time_main.plot(current_time_axis, filtered_signal, label=label_from_file, color=colors(i), alpha=0.8)
+
+        # --- Add filtered data to output structure ---
+        output_data_for_spec["filtered_signals"].append({
+            "original_label": label_from_file,
+            "label": f"Filtered: {label_from_file}", # New label for filtered signal
+            "data": filtered_signal.tolist() # Convert numpy array to list for JSON
+        })
+        # --- End add filtered data ---
+
+        if i == 0:
+            # ... (plotting for ax_combined_spectrum_main and ax_filter_response_main as before) ...
+            first_original_signal_data = original_signal_data
+            first_filtered_signal_data = filtered_signal
+
+            ax_combined_spectrum_main.set_title(f"3. 信号 '{label_from_file}' 功率谱 (文件时长)")
+            ax_combined_spectrum_main.set_xlabel("频率 (Hz)")
+            ax_combined_spectrum_main.grid(True)
+            y_label_power_main = "功率"
+            if NORMALIZE_SPECTRUM_DISPLAY: y_label_power_main = "归一化功率"
+            ax_combined_spectrum_main.set_ylabel(y_label_power_main)
+
+            freq_orig_main, spec_orig_main = compute_power_spectrum(first_original_signal_data, FS_FILTER)
+            spec_orig_plot_main = spec_orig_main
+            if NORMALIZE_SPECTRUM_DISPLAY and len(spec_orig_main) > 0 and np.max(spec_orig_main) > 1e-12:
+                spec_orig_plot_main = spec_orig_main / np.max(spec_orig_main)
+            ax_combined_spectrum_main.plot(freq_orig_main, spec_orig_plot_main, label="原始信号频谱", color='blue', alpha=0.9)
+
+            freq_filt_main, spec_filt_main = compute_power_spectrum(first_filtered_signal_data, FS_FILTER)
+            spec_filt_plot_main = spec_filt_main
+            if NORMALIZE_SPECTRUM_DISPLAY and len(spec_filt_main) > 0 and np.max(spec_filt_main) > 1e-12:
+                spec_filt_plot_main = spec_filt_main / np.max(spec_filt_main)
+            ax_combined_spectrum_main.plot(freq_filt_main, spec_filt_plot_main, label="滤波后信号频谱", color='purple', alpha=0.9)
+            
+            ax_combined_spectrum_main.axvline(LOWCUT_FILTER, color='gray', linestyle=':', alpha=0.7, label=f'通带 ({LOWCUT_FILTER}Hz)')
+            ax_combined_spectrum_main.axvline(HIGHCUT_FILTER, color='gray', linestyle=':', alpha=0.7, label=f'通带 ({HIGHCUT_FILTER}Hz)')
+            handles_main, labels_main = ax_combined_spectrum_main.get_legend_handles_labels()
+            by_label_main = dict(zip(labels_main, handles_main))
+            ax_combined_spectrum_main.legend(by_label_main.values(), by_label_main.keys(), fontsize='small')
+
+            if NORMALIZE_SPECTRUM_DISPLAY:
+                ax_combined_spectrum_main.set_ylim(bottom=0, top=1.1)
+            else:
+                max_val_orig = np.max(spec_orig_plot_main) if len(spec_orig_plot_main) > 0 else 0
+                max_val_filt = np.max(spec_filt_plot_main) if len(spec_filt_plot_main) > 0 else 0
+                ax_combined_spectrum_main.set_ylim(bottom=0, top=max(max_val_orig, max_val_filt) * 1.1 + 1e-9)
+
+
+            common_xlim_max_spectra_main = HIGHCUT_FILTER + (HIGHCUT_FILTER - LOWCUT_FILTER) * 3
+            if common_xlim_max_spectra_main < 10: common_xlim_max_spectra_main = 10.0
+            if common_xlim_max_spectra_main > FS_FILTER / 2: common_xlim_max_spectra_main = FS_FILTER / 2
+            ax_combined_spectrum_main.set_xlim(0, common_xlim_max_spectra_main)
+
+            ax_filter_response_main.set_title("4. Butterworth 带通滤波器频率响应")
+            ax_filter_response_main.set_xlabel('频率 (Hz)'); ax_filter_response_main.set_ylabel('增益'); ax_filter_response_main.grid(True)
+            sos_for_main_plot = butter_bandpass(LOWCUT_FILTER, HIGHCUT_FILTER, FS_FILTER, order=ORDER_FILTER)
+            if sos_for_main_plot is not None:
+                w_freqz_main, h_freqz_main = sosfreqz(sos_for_main_plot, worN=8000, fs=FS_FILTER)
+                ax_filter_response_main.plot(w_freqz_main, abs(h_freqz_main), label=f"阶数 = {ORDER_FILTER}", color='blue')
+                ax_filter_response_main.plot([0, FS_FILTER / 2], [np.sqrt(0.5), np.sqrt(0.5)], '--', color='gray', label='-3dB')
+                ax_filter_response_main.axvline(LOWCUT_FILTER, color='green', linestyle='--', label=f'低截止 ({LOWCUT_FILTER} Hz)')
+                ax_filter_response_main.axvline(HIGHCUT_FILTER, color='red', linestyle='--', label=f'高截止 ({HIGHCUT_FILTER} Hz)')
+                display_xlim_filter_max_main = max(HIGHCUT_FILTER * 2.5, 15.0)
+                display_xlim_filter_min_main = max(0, LOWCUT_FILTER - (HIGHCUT_FILTER - LOWCUT_FILTER)) if LOWCUT_FILTER > 0 else 0
+                if display_xlim_filter_min_main >= display_xlim_filter_max_main :
+                     display_xlim_filter_min_main = max(0, LOWCUT_FILTER - 2)
+                     display_xlim_filter_max_main = HIGHCUT_FILTER + 2
+                ax_filter_response_main.set_xlim(display_xlim_filter_min_main, min(display_xlim_filter_max_main, FS_FILTER/2))
+                ax_filter_response_main.set_ylim(0, 1.1)
+            else:
+                ax_filter_response_main.text(0.5, 0.5, "滤波器设计失败", ha='center', va='center', fontsize=10, color='red')
+            ax_filter_response_main.legend(fontsize='small')
+
+    ax_original_time_main.legend(loc='upper right', fontsize='small')
+    ax_filtered_time_main.legend(loc='upper right', fontsize='small')
+    fig_main.tight_layout(rect=[0, 0, 1, 0.95])
+
+    if len(signals_info_list) > 1:
+        for i in range(1, len(signals_info_list)):
+            # ... (plotting for other signals' spectrum/response as before) ...
+            signal_info_other = signals_info_list[i]
+            # We already filtered this signal when populating output_data_for_spec
+            # and for plotting in ax_filtered_time_main.
+            # We need its original data for spectrum and filtered data for spectrum.
+            original_signal_data_other = np.array(signal_info_other["data"])
+            # Find the corresponding filtered data from our output_data_for_spec
+            # This assumes the order is preserved.
+            filtered_signal_data_other = np.array(output_data_for_spec["filtered_signals"][i]["data"])
+            label_other = signal_info_other.get("label", f"信号 {i + 1}")
+            
+            print(f"\n为信号 '{label_other}' 创建单独的分析图...")
+            # filtered_signal_data_other = butter_bandpass_filter(original_signal_data_other, LOWCUT_FILTER, HIGHCUT_FILTER, FS_FILTER, order=ORDER_FILTER) # Already done
+
+            fig_other, axes_other = plt.subplots(2, 1, figsize=(12, 10))
+            fig_other.suptitle(f"信号 '{label_other}' 分析 (滤波器: {LOWCUT_FILTER}-{HIGHCUT_FILTER}Hz, {ORDER_FILTER}阶, 文件时长)", fontsize=14)
+
+            ax_spectrum_other = axes_other[0]
+            ax_spectrum_other.set_title(f"1. 信号 '{label_other}' 功率谱")
+            ax_spectrum_other.set_xlabel("频率 (Hz)")
+            ax_spectrum_other.grid(True)
+            y_label_power_other = "功率"
+            if NORMALIZE_SPECTRUM_DISPLAY: y_label_power_other = "归一化功率"
+            ax_spectrum_other.set_ylabel(y_label_power_other)
+
+            freq_orig_other, spec_orig_other = compute_power_spectrum(original_signal_data_other, FS_FILTER)
+            spec_orig_plot_other = spec_orig_other
+            if NORMALIZE_SPECTRUM_DISPLAY and len(spec_orig_other) > 0 and np.max(spec_orig_other) > 1e-12:
+                spec_orig_plot_other = spec_orig_other / np.max(spec_orig_other)
+            ax_spectrum_other.plot(freq_orig_other, spec_orig_plot_other, label="原始信号频谱", color='blue', alpha=0.9)
+
+            freq_filt_other, spec_filt_other = compute_power_spectrum(filtered_signal_data_other, FS_FILTER)
+            spec_filt_plot_other = spec_filt_other
+            if NORMALIZE_SPECTRUM_DISPLAY and len(spec_filt_other) > 0 and np.max(spec_filt_other) > 1e-12:
+                spec_filt_plot_other = spec_filt_other / np.max(spec_filt_other)
+            ax_spectrum_other.plot(freq_filt_other, spec_filt_plot_other, label="滤波后信号频谱", color='purple', alpha=0.9)
+            
+            ax_spectrum_other.axvline(LOWCUT_FILTER, color='gray', linestyle=':', alpha=0.7, label=f'通带 ({LOWCUT_FILTER}Hz)')
+            ax_spectrum_other.axvline(HIGHCUT_FILTER, color='gray', linestyle=':', alpha=0.7, label=f'通带 ({HIGHCUT_FILTER}Hz)')
+            handles_other, labels_other_leg = ax_spectrum_other.get_legend_handles_labels()
+            by_label_other = dict(zip(labels_other_leg, handles_other))
+            ax_spectrum_other.legend(by_label_other.values(), by_label_other.keys(), fontsize='small')
+
+            if NORMALIZE_SPECTRUM_DISPLAY:
+                ax_spectrum_other.set_ylim(bottom=0, top=1.1)
+            else:
+                max_val_orig_o = np.max(spec_orig_plot_other) if len(spec_orig_plot_other) > 0 else 0
+                max_val_filt_o = np.max(spec_filt_plot_other) if len(spec_filt_plot_other) > 0 else 0
+                ax_spectrum_other.set_ylim(bottom=0, top=max(max_val_orig_o, max_val_filt_o) * 1.1 + 1e-9)
+            
+            common_xlim_max_spectra_other = HIGHCUT_FILTER + (HIGHCUT_FILTER - LOWCUT_FILTER) * 3
+            if common_xlim_max_spectra_other < 10: common_xlim_max_spectra_other = 10.0
+            if common_xlim_max_spectra_other > FS_FILTER / 2: common_xlim_max_spectra_other = FS_FILTER / 2
+            ax_spectrum_other.set_xlim(0, common_xlim_max_spectra_other)
+
+            ax_filter_resp_other = axes_other[1]
+            ax_filter_resp_other.set_title("2. Butterworth 带通滤波器频率响应")
+            ax_filter_resp_other.set_xlabel('频率 (Hz)'); ax_filter_resp_other.set_ylabel('增益'); ax_filter_resp_other.grid(True)
+            sos_for_other_plot = butter_bandpass(LOWCUT_FILTER, HIGHCUT_FILTER, FS_FILTER, order=ORDER_FILTER)
+            if sos_for_other_plot is not None:
+                w_freqz_other, h_freqz_other = sosfreqz(sos_for_other_plot, worN=8000, fs=FS_FILTER)
+                ax_filter_resp_other.plot(w_freqz_other, abs(h_freqz_other), label=f"阶数 = {ORDER_FILTER}", color='green')
+                ax_filter_resp_other.plot([0, FS_FILTER / 2], [np.sqrt(0.5), np.sqrt(0.5)], '--', color='gray', label='-3dB')
+                ax_filter_resp_other.axvline(LOWCUT_FILTER, color='blue', linestyle='--', label=f'低截止 ({LOWCUT_FILTER} Hz)')
+                ax_filter_resp_other.axvline(HIGHCUT_FILTER, color='red', linestyle='--', label=f'高截止 ({HIGHCUT_FILTER} Hz)')
+                
+                display_xlim_filter_max_other = max(HIGHCUT_FILTER * 2.5, 15.0)
+                display_xlim_filter_min_other = max(0, LOWCUT_FILTER - (HIGHCUT_FILTER - LOWCUT_FILTER)) if LOWCUT_FILTER > 0 else 0
+                if display_xlim_filter_min_other >= display_xlim_filter_max_other :
+                     display_xlim_filter_min_other = max(0, LOWCUT_FILTER - 2)
+                     display_xlim_filter_max_other = HIGHCUT_FILTER + 2
+                ax_filter_resp_other.set_xlim(display_xlim_filter_min_other, min(display_xlim_filter_max_other, FS_FILTER/2))
+                ax_filter_resp_other.set_ylim(0, 1.1)
+            else:
+                ax_filter_resp_other.text(0.5, 0.5, "滤波器设计失败", ha='center', va='center', fontsize=10, color='red')
+            ax_filter_resp_other.legend(fontsize='small')
+            
+            fig_other.tight_layout(rect=[0, 0, 1, 0.95])
+
+
+    if signals_info_list:
+        # ... (plotting for extended time signal as before) ...
+        print(f"\n准备绘制所有信号滤波后的扩展时域图 ({EXTENDED_TIME_DURATION}s)...")
+        fig_extended, ax_extended = plt.subplots(1, 1, figsize=(12, 6))
+        fig_extended.suptitle(f"所有信号滤波后时域 ({EXTENDED_TIME_DURATION}s, 滤波器: {LOWCUT_FILTER}-{HIGHCUT_FILTER}Hz, {ORDER_FILTER}阶)", fontsize=14)
+        ax_extended.set_title(f"滤波后信号 (时域 - {EXTENDED_TIME_DURATION}s)")
+        ax_extended.set_xlabel(f"时间 (s)") # Changed label
+        ax_extended.set_ylabel("幅值")
+        ax_extended.grid(True)
+
+        num_points_extended = int(EXTENDED_TIME_DURATION * FS_FILTER)
+        time_axis_extended = np.linspace(0, EXTENDED_TIME_DURATION, num_points_extended, endpoint=False)
+
+        for i, signal_info in enumerate(signals_info_list):
+            label_from_file = signal_info.get("label", f"信号 {i + 1}")
+            
+            print(f"  为 '{label_from_file}' 生成 {EXTENDED_TIME_DURATION}s 信号...")
+            original_signal_extended = generate_signal_from_params(time_axis_extended, label_from_file, FS_FILTER)
+            
+            if original_signal_extended is not None and len(original_signal_extended) > 0 :
+                filtered_signal_extended = butter_bandpass_filter(original_signal_extended, LOWCUT_FILTER, HIGHCUT_FILTER, FS_FILTER, order=ORDER_FILTER)
+                ax_extended.plot(time_axis_extended, filtered_signal_extended, label=label_from_file, color=colors(i), alpha=0.8)
+            else:
+                print(f"  无法为 '{label_from_file}' 生成或滤波扩展信号。")
+        ax_extended.legend(loc='upper right', fontsize='small')
+        fig_extended.tight_layout(rect=[0, 0, 1, 0.95])
+
+
+    # --- 保存滤波后的数据到文件 ---
+    try:
+        with open(output_filename_for_spec, 'w') as f_out:
+            json.dump(output_data_for_spec, f_out, indent=2)
+        print(f"\n滤波后的信号数据已保存到: {output_filename_for_spec}")
+    except Exception as e:
+        print(f"错误: 保存滤波后数据到 {output_filename_for_spec} 失败: {e}")
+    # --- 文件保存结束 ---
+
+    print("\n所有图形已准备就绪。")
+    plt.show(block=False) 
+    input("按 Enter 键关闭所有图形窗口...")
+    plt.close('all')
+    print("所有图形窗口已关闭。")
+    print("--- 模块二测试结束 ---")

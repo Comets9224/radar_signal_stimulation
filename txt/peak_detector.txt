@@ -1,0 +1,96 @@
+# peak_detector.py
+"""
+峰值检测模块
+"""
+import numpy as np
+
+
+def detect_peaks(power_spectrum, frequencies, threshold_ratio=0.5):
+    """
+    基于阈值和局部最大值条件检测功率谱中的峰值。
+
+    参数:
+    power_spectrum (numpy.ndarray): 功率谱数据。
+    frequencies (numpy.ndarray): 对应的频率轴。
+    threshold_ratio (float): 峰值点功率相对于最大功率的最小比例。
+
+    返回:
+    tuple: (peak_indices, detected_peak_frequencies)
+        peak_indices (list): 检测到的峰值在功率谱数组中的索引列表。
+        detected_peak_frequencies (list): 检测到的峰值对应的频率值列表 (精确到小数点后两位)。
+    """
+    if len(power_spectrum) == 0 or len(frequencies) == 0:
+        return [], []
+    if len(power_spectrum) != len(frequencies):
+        raise ValueError("功率谱和频率数组长度必须一致")
+
+    max_power = np.max(power_spectrum)
+    if max_power == 0:  # 防止除以零
+        return [], []
+
+    threshold = max_power * threshold_ratio
+
+    peak_indices = []
+    detected_peak_frequencies = []
+
+    # 遍历功率谱数据点，不包括边界点（因为需要比较前后点）
+    for i in range(1, len(power_spectrum) - 1):
+        current_power = power_spectrum[i]
+        # 条件1: 峰值点功率需大于阈值
+        if current_power > threshold:
+            # 条件2: 满足局部最大值条件 (前、后点均小于当前点)
+            if current_power > power_spectrum[i - 1] and current_power > power_spectrum[i + 1]:
+                peak_indices.append(i)
+                # 输出检测到的频率值 (精确到小数点后两位)
+                detected_peak_frequencies.append(round(frequencies[i], 2))
+
+    # 如果没有检测到峰值，但最大值本身可能是一个峰值（例如单峰情况且边界效应不影响）
+    # 这个简单算法可能在频谱非常平滑或只有一个主要峰值时，如果峰值在边界，会漏掉。
+    # 但对于实验中的清晰单峰，应该没问题。
+
+    return peak_indices, detected_peak_frequencies
+
+
+if __name__ == '__main__':
+    # 测试峰值检测模块
+    # 构造一个测试用的功率谱
+    test_freqs = np.linspace(0, 50, 501)  # 0 到 50 Hz, 501 点
+    test_powers = np.zeros_like(test_freqs)
+
+    # 添加一些峰值
+    test_powers[50] = 10  # 对应 5 Hz (0.1 Hz 分辨率, 50 * 0.1 = 5)
+    test_powers[51] = 9
+    test_powers[49] = 8
+
+    test_powers[150] = 7  # 对应 15 Hz
+    test_powers[151] = 6
+    test_powers[149] = 6.5
+
+    test_powers[200] = 3  # 对应 20 Hz, 这个峰值可能低于阈值
+
+    # 加一点噪声
+    test_powers += 0.1 * np.random.rand(len(test_powers))
+    test_powers[50] = 10  # 确保主峰值
+    test_powers[150] = 7  # 确保次峰值
+
+    indices, freqs = detect_peaks(test_powers, test_freqs, threshold_ratio=0.5)
+
+    print("检测到的峰值索引:", indices)
+    print("检测到的峰值频率:", freqs)
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(test_freqs, test_powers, label='测试功率谱')
+    if indices:
+        plt.scatter(test_freqs[indices], test_powers[indices], color='red', marker='o', label='检测到的峰值')
+    plt.axhline(np.max(test_powers) * 0.5, color='gray', linestyle='--', label='检测阈值 (50% max)')
+    plt.title('峰值检测测试')
+    plt.xlabel('频率 (Hz)')
+    plt.ylabel('功率')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # 预期输出 (取决于随机噪声，但5Hz和15Hz的峰应该能被检测到)
+    # 例如: 检测到的峰值频率: [5.0, 15.0]
