@@ -1,4 +1,6 @@
-# visualizer.py
+# File processed on: 2025-05-07 18:30:35
+
+# moulds/visualizer.py
 """
 可视化模块
 """
@@ -6,9 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import platform
 import json
+import os
 
 # --- 中文显示配置 ---
-# (字体配置代码保持不变)
+# (保持不变)
 system_name = platform.system()
 try:
     if system_name == "Windows":
@@ -27,7 +30,6 @@ try:
 except Exception as e:
     print(f"[模块五-可视化配置] 设置字体时发生错误: {e}")
 # --- 中文显示配置结束 ---
-
 
 def plot_results(time_axis, original_signal, filtered_signal,
                  frequencies, power_spectrum,
@@ -53,37 +55,32 @@ def plot_results(time_axis, original_signal, filtered_signal,
     fig.suptitle(f"信号分析结果: {signal_label}\n{filter_info_str}", fontsize=14)
 
     # --- 子图1: 信号时域对比 ---
-    can_plot_time_domain = True
-    if time_axis.size == 0:
-        print(f"  警告 (plot_results for '{signal_label}'): 时间轴数据缺失。")
-        can_plot_time_domain = False
-    
     ax1.set_title('信号时域对比')
     ax1.set_xlabel('时间 (秒)')
     ax1.set_ylabel('幅值')
     ax1.grid(True)
-
     plotted_time_domain = False
-    if can_plot_time_domain:
+    if time_axis.size > 0:
         if original_signal.size > 0:
             plot_len = min(len(time_axis), len(original_signal))
             ax1.plot(time_axis[:plot_len], original_signal[:plot_len], label='原始信号', alpha=0.7, color='blue')
             plotted_time_domain = True
-        # else: # Removed redundant print, main loading will warn
-            # print(f"  警告 (plot_results for '{signal_label}'): 原始时域信号数据缺失。") 
+        else:
+            print(f"  警告 (plot_results for '{signal_label}'): 原始时域信号数据缺失。")
         
         if filtered_signal.size > 0:
             plot_len = min(len(time_axis), len(filtered_signal))
             ax1.plot(time_axis[:plot_len], filtered_signal[:plot_len], label='滤波后信号', color='orange')
             plotted_time_domain = True
-        # else: # Removed redundant print
-            # print(f"  警告 (plot_results for '{signal_label}'): 滤波后时域信号数据缺失。")
+        else:
+            print(f"  警告 (plot_results for '{signal_label}'): 滤波后时域信号数据缺失。")
         
         if plotted_time_domain:
              ax1.legend()
-        elif original_signal.size == 0 and filtered_signal.size == 0 : # Only show this if both are missing
+        elif original_signal.size == 0 and filtered_signal.size == 0 :
             ax1.text(0.5, 0.5, "时域信号数据缺失", ha='center', va='center', fontsize=12, color='gray')
     else:
+        print(f"  警告 (plot_results for '{signal_label}'): 时间轴数据缺失。")
         ax1.text(0.5, 0.5, "时间轴和/或时域信号数据缺失", ha='center', va='center', fontsize=12, color='gray')
 
     # --- 子图2: 功率谱图与峰值检测 ---
@@ -102,7 +99,6 @@ def plot_results(time_axis, original_signal, filtered_signal,
         power_spectrum = power_spectrum[:min_len_spec]
         if min_len_spec == 0: can_plot_spectrum = False
 
-
     if can_plot_spectrum:
         ax2.plot(frequencies, power_spectrum, label='滤波后信号的功率谱', color='dodgerblue')
 
@@ -120,9 +116,8 @@ def plot_results(time_axis, original_signal, filtered_signal,
                                  xytext=(0, 10), ha='center', color='red', fontsize=9)
             elif len(peak_indices) > 0:
                 print(f"  信息 (plot_results for '{signal_label}'): 提供的峰值索引无效或越界。")
-        # else: # Removed redundant print
-            # print(f"  信息 (plot_results for '{signal_label}'): 未提供峰值索引或峰值列表为空。")
-
+        else:
+            print(f"  信息 (plot_results for '{signal_label}'): 未提供峰值索引或峰值列表为空。")
 
         if base_freq_actual is not None:
             ax2.axvline(base_freq_actual, color='green', linestyle='--', alpha=0.6,
@@ -151,7 +146,6 @@ def plot_results(time_axis, original_signal, filtered_signal,
             ax2.set_ylim(bottom=-0.05 * max_power_in_spectrum, top=max_power_in_spectrum * 1.15)
         else:
             ax2.set_ylim(bottom=0, top=1.0)
-        
         ax2.legend()
     else:
         ax2.text(0.5, 0.5, "频谱数据不足或缺失", ha='center', va='center', fontsize=12, color='gray')
@@ -160,162 +154,107 @@ def plot_results(time_axis, original_signal, filtered_signal,
     return fig
 
 
-def prepare_visualization_data_from_files(
-    file_signal_gen_path="signal_to_filters.txt",
-    file_filters_out_path="filters_to_spec.txt",
-    file_spectrum_out_path="spec_to_peak.txt",
-    file_peaks_out_path="peak_to_visual.txt"
-):
-    """
-    从多个文件中加载并整合数据，为可视化做准备。
-    返回一个包含全局信息和每个信号完整数据集的字典。
-    """
-    print("\n--- 开始从文件整合可视化数据 ---")
-    _all_data_loaded_successfully = True
-
-    def _load_json_file(filename, description):
-        nonlocal _all_data_loaded_successfully
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            print(f"从 {filename} ({description}) 加载数据成功。")
-            return data
-        except FileNotFoundError:
-            print(f"错误: 文件 {filename} ({description}) 未找到。")
-            _all_data_loaded_successfully = False
-            return None
-        except json.JSONDecodeError as e:
-            print(f"错误: 文件 {filename} ({description}) JSON格式无效: {e}")
-            _all_data_loaded_successfully = False
-            return None
-        except Exception as e:
-            print(f"加载 {filename} ({description}) 时发生未知错误: {e}")
-            _all_data_loaded_successfully = False
-            return None
-
-    data_sig_gen = _load_json_file(file_signal_gen_path, "原始信号")
-    data_filters = _load_json_file(file_filters_out_path, "滤波后时域信号")
-    data_spectrum = _load_json_file(file_spectrum_out_path, "频谱数据")
-    data_peaks = _load_json_file(file_peaks_out_path, "峰值检测结果")
-
-    if not _all_data_loaded_successfully:
-        return None # Indicate failure
-
-    # --- 提取全局信息 ---
-    fs_global = data_sig_gen.get("fs")
-    if fs_global is None:
-        print(f"错误: 未能从 '{file_signal_gen_path}' 获取 'fs' (采样率)。")
-        return None
-        
-    time_axis_global = np.array(data_sig_gen.get("time_axis", []))
-    if time_axis_global.size == 0:
-         print(f"警告: '{file_signal_gen_path}' 中缺少 'time_axis' 或时间轴为空。")
-         if data_filters: time_axis_global = np.array(data_filters.get("time_axis", []))
-         if time_axis_global.size == 0:
-              print(f"警告: '{file_filters_out_path}' 中也缺少 'time_axis'。")
-
-    filter_params_global = data_filters.get("filter_params", {}) if data_filters else {}
-    
-    # --- 构建数据映射 ---
-    filtered_signal_map = {item["original_label"]: item for item in data_filters.get("filtered_signals", []) if "original_label" in item} if data_filters else {}
-    spectrum_map = {item["original_label"]: item for item in data_spectrum.get("spectrum_data", []) if "original_label" in item} if data_spectrum else {}
-    peaks_map = {item["original_label"]: item for item in data_peaks.get("peak_detection_results", []) if "original_label" in item} if data_peaks else {}
-
-    # --- 整合每个信号的数据 ---
-    consolidated_signals_data = []
-    if not (data_sig_gen and "signals" in data_sig_gen):
-        print(f"错误: '{file_signal_gen_path}' 中缺少 'signals' 列表。")
-        return None
-
-    for sig_gen_entry in data_sig_gen["signals"]:
-        original_label = sig_gen_entry.get("label")
-        if not original_label:
-            continue
-
-        single_signal_package = {
-            "original_label": original_label,
-            "original_signal_data": sig_gen_entry.get("data", []),
-            "base_freq_actual": sig_gen_entry.get("base_freq"),
-            "filtered_signal_data": [],
-            "filtered_label": f"Filtered: {original_label}", # Default
-            "spectrum_frequencies": [],
-            "power_spectrum_data": [],
-            "peak_indices": []
-        }
-
-        filt_entry = filtered_signal_map.get(original_label)
-        if filt_entry:
-            single_signal_package["filtered_signal_data"] = filt_entry.get("data", [])
-            single_signal_package["filtered_label"] = filt_entry.get("label", single_signal_package["filtered_label"])
-
-        spec_entry = spectrum_map.get(original_label)
-        if spec_entry:
-            single_signal_package["spectrum_frequencies"] = spec_entry.get("frequencies", [])
-            single_signal_package["power_spectrum_data"] = spec_entry.get("power_spectrum", [])
-            single_signal_package["filtered_label"] = spec_entry.get("filtered_label", single_signal_package["filtered_label"]) # Update if more specific
-
-        peak_entry = peaks_map.get(original_label)
-        if peak_entry:
-            detected_peaks_info = peak_entry.get("detected_peaks", [])
-            single_signal_package["peak_indices"] = [p.get("index_in_spectrum") for p in detected_peaks_info if p.get("index_in_spectrum") is not None]
-            single_signal_package["filtered_label"] = peak_entry.get("filtered_label", single_signal_package["filtered_label"]) # Update if more specific
-        
-        consolidated_signals_data.append(single_signal_package)
-        
-    return {
-        "fs": fs_global,
-        "time_axis": time_axis_global,
-        "filter_params": filter_params_global,
-        "signals_to_plot": consolidated_signals_data
-    }
-
-
 if __name__ == '__main__':
+    print("\n--- 可视化模块独立测试 (从 peak_to_visual.txt 加载数据) ---")
     # 字体设置已在模块导入时（文件顶部）完成。
-    
-    visualization_data_package = prepare_visualization_data_from_files()
 
-    if visualization_data_package is None:
-        print("数据准备失败，无法进行可视化。")
+    # --- 路径设置 ---
+    current_script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root_dir = os.path.dirname(current_script_dir)
+    intermediate_output_folder = os.path.join(project_root_dir, "intermediate_output")
+    
+    input_filename = os.path.join(intermediate_output_folder, "peak_to_visual.txt")
+    # --- 路径设置结束 ---
+
+    try:
+        with open(input_filename, 'r', encoding='utf-8') as f:
+            loaded_data = json.load(f)
+        print(f"从 {input_filename} 加载数据成功。")
+    except FileNotFoundError:
+        print(f"错误: 文件 {input_filename} 未找到。请确保已运行所有前序模块。程序退出。")
+        exit()
+    except json.JSONDecodeError as e:
+        print(f"错误: 文件 {input_filename} JSON格式无效: {e}。程序退出。")
+        exit()
+    except Exception as e:
+        print(f"加载 {input_filename} 时发生未知错误: {e}。程序退出。")
         exit()
 
-    FS_FROM_FILE = visualization_data_package["fs"]
-    time_axis_from_file = visualization_data_package["time_axis"]
-    filter_params_info = visualization_data_package["filter_params"]
-    signals_to_plot_list = visualization_data_package["signals_to_plot"]
+    # --- Extract global information ---
+    FS_FROM_FILE = loaded_data.get("fs")
+    time_axis_from_file = np.array(loaded_data.get("time_axis", [])) # This should now be in peak_to_visual.txt
+    filter_params_info = loaded_data.get("filter_params", {})
+    
+    # The key for results list, assuming it's 'peak_detection_results'
+    results_list = loaded_data.get("peak_detection_results", []) 
 
+    if FS_FROM_FILE is None:
+        print("错误: 文件中缺少 'fs' (采样率)。")
+        exit()
+    if time_axis_from_file.size == 0 :
+         print("警告: 文件中缺少 'time_axis' 或时间轴为空。时域图将受影响。")
+
+
+    if not results_list:
+        print("文件中没有信号处理结果数据。程序退出。")
+        exit()
+    
     filter_info_str_global = ""
     if filter_params_info:
         fp_str = f"源滤波器: {filter_params_info.get('lowcut','?')} - {filter_params_info.get('highcut','?')} Hz, {filter_params_info.get('order','?')}阶"
         filter_info_str_global = fp_str
     
+    print(f"采样率 (从文件): {FS_FROM_FILE} Hz")
+    if filter_info_str_global: print(f"滤波器信息: {filter_info_str_global}")
+
     output_plots = []
 
-    if not signals_to_plot_list:
-        print("没有整合到可用于绘图的信号数据。")
-    else:
-        for i, signal_data_package in enumerate(signals_to_plot_list):
-            print(f"\n正在为信号 '{signal_data_package['original_label']}' 生成可视化图...")
+    for i, result_entry in enumerate(results_list):
+        original_label = result_entry.get("original_label", "N/A")
+        filtered_label = result_entry.get("filtered_label", f"Processed Signal {i+1}")
+        
+        print(f"\n正在为信号 '{filtered_label}' (源自: '{original_label}') 生成可视化图...")
 
-            fig = plot_results(
-                time_axis=time_axis_from_file,
-                original_signal=signal_data_package["original_signal_data"],
-                filtered_signal=signal_data_package["filtered_signal_data"],
-                frequencies=signal_data_package["spectrum_frequencies"],
-                power_spectrum=signal_data_package["power_spectrum_data"],
-                peak_indices=signal_data_package["peak_indices"],
-                base_freq_actual=signal_data_package["base_freq_actual"],
-                signal_label=signal_data_package["filtered_label"], # Use the determined filtered label
-                filter_info_str=filter_info_str_global,
-                fs_for_plot=FS_FROM_FILE
-            )
-            if fig:
-                output_plots.append(fig)
+        # Extract all necessary data for plot_results from the result_entry
+        # These keys MUST match what peak_detector.py saved into peak_to_visual.txt
+        original_signal_data = np.array(result_entry.get("original_signal_data", []))
+        filtered_signal_data = np.array(result_entry.get("filtered_signal_data", []))
+        spectrum_frequencies = np.array(result_entry.get("spectrum_frequencies", []))
+        power_spectrum_data = np.array(result_entry.get("power_spectrum_data", []))
+        detected_peaks_info_list = result_entry.get("detected_peaks", [])
+        peak_indices_from_file = [p.get("index_in_spectrum") for p in detected_peaks_info_list if p.get("index_in_spectrum") is not None]
+        
+        # Attempt to get base_freq_actual. This needs to be passed through all files from signal_generator
+        # For now, we'll try to parse it from original_label if not directly available.
+        base_freq_actual = result_entry.get("base_freq_actual")
+        if base_freq_actual is None: # Try to parse from original_label as a fallback
+            try:
+                # Simplified parsing, assuming "F=X.XHz" format in original_label
+                freq_str_part = original_label.split('F=')[1].split('Hz')[0]
+                base_freq_actual = float(freq_str_part)
+            except:
+                pass # Keep it None if parsing fails
+
+        # Call the plotting function
+        fig = plot_results(
+            time_axis=time_axis_from_file, # Use the global time_axis from the file
+            original_signal=original_signal_data,
+            filtered_signal=filtered_signal_data,
+            frequencies=spectrum_frequencies,
+            power_spectrum=power_spectrum_data,
+            peak_indices=peak_indices_from_file if peak_indices_from_file else None,
+            base_freq_actual=base_freq_actual,
+            signal_label=filtered_label,
+            filter_info_str=filter_info_str_global,
+            fs_for_plot=FS_FROM_FILE
+        )
+        if fig:
+            output_plots.append(fig)
 
     if output_plots:
         print(f"\n共生成 {len(output_plots)} 个可视化图。")
         plt.show(block=False)
-        input("按 Enter 键关闭所有可视化图窗口...")
+        input("按 Enter 键结束程序并关闭所有图形...")
         plt.close('all')
         print("所有可视化图窗口已关闭。")
     else:

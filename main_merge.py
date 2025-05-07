@@ -1,0 +1,186 @@
+# main_multiple.py
+"""
+主程序脚本 - 交互式生成多个信号分量，叠加后进行统一处理与可视化
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+# import json # No longer saving intermediate files in this version
+import os
+
+# --- 从模块导入函数 ---
+try:
+    # from moulds.signal_generator import generate_signal # We'll generate directly
+    from moulds.filters import butter_bandpass_filter
+    from moulds.spectrum_analyzer import compute_power_spectrum
+    from moulds.peak_detector import detect_peaks
+    from moulds.visualizer import plot_results
+except ImportError as e:
+    print(f"错误：无法导入一个或多个模块: {e}")
+    print("请确保模块文件位于 'moulds' 文件夹下，并且此脚本与 moulds 文件夹在同一父目录下，或者 'moulds' 的父目录在 PYTHONPATH 中。")
+    exit()
+
+# --- 中文显示配置 ---
+try:
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    print("[Main_Multiple] 尝试设置matplotlib中文字体为SimHei。")
+except Exception as e:
+    print(f"[Main_Multiple] 设置中文字体失败: {e}。")
+# --- 中文显示配置结束 ---
+
+# ==============================================================================
+# --- 固定处理参数 (可在脚本开头修改) ---
+# ==============================================================================
+# 信号参数
+SIGNAL_DURATION = 1.0  # 秒
+NUM_SAMPLES = 1000   # 点数
+SYSTEM_FS = NUM_SAMPLES / SIGNAL_DURATION # 根据上面计算采样率
+SIGNAL_AMPLITUDE = 1.0 # 固定信号峰值幅度 (每个分量都用这个幅度)
+
+# 固定的滤波器参数
+LOWCUT_FREQ = 4.0      # Hz
+HIGHCUT_FREQ = 6.0     # Hz
+FILTER_ORDER = 5       # 阶
+
+# 固定的峰值检测参数
+PEAK_THRESHOLD_RATIO = 0.5 # 50% of max power
+# ==============================================================================
+
+def main():
+    print("--- 交互式多信号分量叠加处理与可视化 ---")
+    print(f"信号参数: 时长={SIGNAL_DURATION}s, 点数={NUM_SAMPLES}, 采样率={SYSTEM_FS}Hz, 固定分量幅度={SIGNAL_AMPLITUDE}")
+    print(f"固定滤波器: 通带={LOWCUT_FREQ}-{HIGHCUT_FREQ}Hz, 阶数={FILTER_ORDER}")
+    print(f"固定峰值检测阈值比例: {PEAK_THRESHOLD_RATIO*100:.0f}% of max power")
+
+    time_axis_common = np.linspace(0, SIGNAL_DURATION, NUM_SAMPLES, endpoint=False)
+    
+    all_generated_signals = []
+    signal_component_descriptions = [] # 用于图表标题的更详细描述
+    first_base_freq_input = None # 用于 plot_results 的 base_freq_actual
+
+    keep_adding_signals = True
+    component_count = 1
+
+    while keep_adding_signals:
+        print(f"\n--- 请输入第 {component_count} 个信号分量的参数 ---")
+        try:
+            user_base_freq_str = input(f"  基频 (Hz) [默认 5.0]: ")
+            base_freq = float(user_base_freq_str) if user_base_freq_str else 5.0
+            if component_count == 1:
+                first_base_freq_input = base_freq # 记录第一个输入的基频
+
+            user_noise_mean_str = input(f"  此分量上的噪声均值 [默认 0.0]: ")
+            noise_mean = float(user_noise_mean_str) if user_noise_mean_str else 0.0
+
+            user_noise_std_str = input(f"  此分量上的噪声标准差 [默认 0.1]: ")
+            noise_std = float(user_noise_std_str) if user_noise_std_str else 0.1
+            if noise_std < 0:
+                noise_std = 0.1
+                print("  标准差不能为负,已设为0.1")
+
+        except ValueError:
+            print("  输入无效，请使用数字。将使用默认参数。")
+            base_freq = 5.0
+            if component_count == 1:
+                first_base_freq_input = base_freq
+            noise_mean = 0.0
+            noise_std = 0.1
+        
+        component_desc = f"F={base_freq}Hz (Amp={SIGNAL_AMPLITUDE}, NoiseMean={noise_mean}, NoiseStd={noise_std})"
+        print(f"  添加分量: {component_desc}")
+        
+        clean_component = SIGNAL_AMPLITUDE * np.sin(2 * np.pi * base_freq * time_axis_common)
+        noise_component = np.random.normal(noise_mean, noise_std, NUM_SAMPLES)
+        current_signal_component = clean_component + noise_component
+        
+        all_generated_signals.append(current_signal_component)
+        signal_component_descriptions.append(component_desc) 
+
+        if component_count >= 1: # 至少有一个分量后再询问
+            add_another = input("是否添加下一个信号分量? (y/n) [y]: ").lower()
+            if add_another == 'n':
+                keep_adding_signals = False
+        component_count += 1
+
+    if not all_generated_signals:
+        print("没有生成任何信号分量，程序退出。")
+        return
+
+    # 1. 信号叠加 (混频)
+    print("\n[1. 信号叠加]")
+    original_signal_mixed = np.sum(all_generated_signals, axis=0)
+    print(f"  所有信号分量已叠加。总点数: {len(original_signal_mixed)}")
+    mixed_signal_composition_str = " + ".join([s.split(' (')[0] for s in signal_component_descriptions]) # 简短描述
+
+
+    # 2. 滤波处理 (对叠加后的信号)
+    print("\n[2. 滤波器模块]")
+    filtered_signal_mixed = butter_bandpass_filter(
+        data=original_signal_mixed,
+        lowcut=LOWCUT_FREQ,
+        highcut=HIGHCUT_FREQ,
+        fs=SYSTEM_FS,
+        order=FILTER_ORDER
+    )
+    print(f"  叠加信号已滤波 (数据点数: {len(filtered_signal_mixed)})")
+
+    # 3. 频谱分析 (对滤波后的叠加信号)
+    print("\n[3. 频谱分析模块]")
+    frequencies, power_spectrum = compute_power_spectrum(
+        signal=filtered_signal_mixed,
+        fs=SYSTEM_FS
+    )
+    print(f"  频域数据已计算 (频率点数: {len(frequencies)})")
+
+    # 4. 峰值检测 (对滤波后的叠加信号的频谱)
+    print("\n[4. 峰值检测模块]")
+    spectrum_data_for_peaks = (power_spectrum, frequencies)
+    peak_indices, detected_frequencies_list, _ = detect_peaks(
+        spectrum_data_for_peaks,
+        threshold_ratio=PEAK_THRESHOLD_RATIO
+    )
+    
+    peak_info_for_console_and_plot = "未检测到显著峰值"
+    if detected_frequencies_list:
+        formatted_freqs = [f"{f:.2f}" for f in detected_frequencies_list]
+        peak_info_for_console_and_plot = f"检测到的峰值频率: {', '.join(formatted_freqs)} Hz"
+    print(f"  {peak_info_for_console_and_plot.replace('Detected peaks at frequencies:', '检测到的峰值频率:')}")
+
+
+    # 5. 最终可视化模块调用 (单一综合图)
+    print("\n[5. 可视化模块]")
+    print("  准备最终可视化结果...")
+    
+    plot_main_title = f"混合信号分析: [{mixed_signal_composition_str}]"
+    plot_filter_info = f"滤波器: {LOWCUT_FREQ}-{HIGHCUT_FREQ}Hz, {FILTER_ORDER}阶"
+    plot_peak_info = f"峰值检测阈值: {PEAK_THRESHOLD_RATIO*100:.0f}% | {peak_info_for_console_and_plot.replace('Detected peaks at frequencies:', '检测结果:')}"
+    
+    full_subtitle_info = f"{plot_filter_info}\n{plot_peak_info}"
+    
+    fig = plot_results(
+        time_axis=time_axis_common,
+        original_signal=original_signal_mixed,
+        filtered_signal=filtered_signal_mixed,
+        frequencies=frequencies,
+        power_spectrum=power_spectrum,
+        peak_indices=peak_indices,
+        base_freq_actual=first_base_freq_input, # 显示第一个输入分量的基频作为参考
+        signal_label=plot_main_title, 
+        filter_info_str=full_subtitle_info,
+        fs_for_plot=SYSTEM_FS
+    )
+
+    print("\n--- 所有处理和图形创建完毕 ---")
+    if fig: # 检查fig是否成功创建
+        print("调用 plt.show() 来显示图形...")
+        plt.show(block=False) 
+        input("按 Enter 键结束程序并关闭图形...") 
+        plt.close('all') 
+    else:
+        print("未能生成可视化图形。")
+        
+    print("程序结束。")
+
+
+if __name__ == "__main__":
+    main()
