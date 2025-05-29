@@ -1,30 +1,46 @@
 # main_multiple.py
-"""
-主程序脚本 - 交互式生成多个信号分量，叠加后进行统一处理与可视化
-"""
+# 导入numpy库，用于数值计算，特别是数组操作
 import numpy as np
+# 导入matplotlib.pyplot库，用于绘图
 import matplotlib.pyplot as plt
-# import json # No longer saving intermediate files in this version
+# # import json # 不再在此版本中保存中间文件 (原注释保留，表示此行曾被考虑或使用)
+# 导入os库，用于与操作系统交互，例如文件路径操作 (虽然在此脚本中未直接使用，但通常是良好实践)
 import os
 
 # --- 从模块导入函数 ---
+# 尝试导入自定义模块中的函数
 try:
-    # from moulds.signal_generator import generate_signal # We'll generate directly
+    # from moulds.signal_generator import generate_signal # 我们将直接生成信号 (原注释保留)
+    # 从moulds.filters模块导入butter_bandpass_filter函数
     from moulds.filters import butter_bandpass_filter
+    # 从moulds.spectrum_analyzer模块导入compute_power_spectrum函数
     from moulds.spectrum_analyzer import compute_power_spectrum
+    # 从moulds.peak_detector模块导入detect_peaks函数
     from moulds.peak_detector import detect_peaks
+    # 从moulds.visualizer模块导入plot_results函数
     from moulds.visualizer import plot_results
+# 捕获导入错误
 except ImportError as e:
+    # 打印错误信息，提示用户模块导入失败
     print(f"错误：无法导入一个或多个模块: {e}")
-    print("请确保模块文件位于 'moulds' 文件夹下，并且此脚本与 moulds 文件夹在同一父目录下，或者 'moulds' 的父目录在 PYTHONPATH 中。")
+    # 打印解决导入问题的建议
+    print(
+        "请确保模块文件位于 'moulds' 文件夹下，并且此脚本与 moulds 文件夹在同一父目录下，或者 'moulds' 的父目录在 PYTHONPATH 中。")
+    # 退出程序
     exit()
 
 # --- 中文显示配置 ---
+# 尝试设置matplotlib以正确显示中文字符
 try:
+    # 设置matplotlib的sans-serif字体为SimHei，用于显示中文
     plt.rcParams['font.sans-serif'] = ['SimHei']
+    # 设置matplotlib的axes.unicode_minus为False，用于正确显示负号
     plt.rcParams['axes.unicode_minus'] = False
+    # 打印成功设置中文字体的信息
     print("[Main_Multiple] 尝试设置matplotlib中文字体为SimHei。")
+# 捕获设置字体时可能发生的任何异常
 except Exception as e:
+    # 打印设置中文字体失败的错误信息
     print(f"[Main_Multiple] 设置中文字体失败: {e}。")
 # --- 中文显示配置结束 ---
 
@@ -32,155 +48,241 @@ except Exception as e:
 # --- 固定处理参数 (可在脚本开头修改) ---
 # ==============================================================================
 # 信号参数
-SIGNAL_DURATION = 1.0  # 秒
-NUM_SAMPLES = 1000   # 点数
-SYSTEM_FS = NUM_SAMPLES / SIGNAL_DURATION # 根据上面计算采样率
-SIGNAL_AMPLITUDE = 1.0 # 固定信号峰值幅度 (每个分量都用这个幅度)
+# 定义信号的总时长，单位为秒
+SIGNAL_DURATION = 1.0
+# 定义信号的采样点数
+NUM_SAMPLES = 1000
+# 根据信号时长和采样点数计算采样率 (Fs)
+SYSTEM_FS = NUM_SAMPLES / SIGNAL_DURATION
+# 定义每个信号分量的固定峰值幅度
+SIGNAL_AMPLITUDE = 1.0
 
 # 固定的滤波器参数
-LOWCUT_FREQ = 4.0      # Hz
-HIGHCUT_FREQ = 6.0     # Hz
-FILTER_ORDER = 5       # 阶
+# 定义带通滤波器的低截止频率，单位为赫兹 (Hz)
+LOWCUT_FREQ = 4.0
+# 定义带通滤波器的高截止频率，单位为赫兹 (Hz)
+HIGHCUT_FREQ = 6.0
+# 定义滤波器的阶数
+FILTER_ORDER = 5
 
 # 固定的峰值检测参数
-PEAK_THRESHOLD_RATIO = 0.5 # 50% of max power
+# 定义峰值检测的阈值比例，相对于最大功率谱密度值
+PEAK_THRESHOLD_RATIO = 0.5
+
+
 # ==============================================================================
 
+# 定义主函数，包含程序的主要逻辑
 def main():
+    # 打印程序启动信息
     print("--- 交互式多信号分量叠加处理与可视化 ---")
-    print(f"信号参数: 时长={SIGNAL_DURATION}s, 点数={NUM_SAMPLES}, 采样率={SYSTEM_FS}Hz, 固定分量幅度={SIGNAL_AMPLITUDE}")
+    # 打印固定的信号参数
+    print(
+        f"信号参数: 时长={SIGNAL_DURATION}s, 点数={NUM_SAMPLES}, 采样率={SYSTEM_FS}Hz, 固定分量幅度={SIGNAL_AMPLITUDE}")
+    # 打印固定的滤波器参数
     print(f"固定滤波器: 通带={LOWCUT_FREQ}-{HIGHCUT_FREQ}Hz, 阶数={FILTER_ORDER}")
-    print(f"固定峰值检测阈值比例: {PEAK_THRESHOLD_RATIO*100:.0f}% of max power")
+    # 打印固定的峰值检测参数
+    print(f"固定峰值检测阈值比例: {PEAK_THRESHOLD_RATIO * 100:.0f}% of max power")
 
+    # 生成时间轴，从0到SIGNAL_DURATION，共NUM_SAMPLES个点，不包含结束点
     time_axis_common = np.linspace(0, SIGNAL_DURATION, NUM_SAMPLES, endpoint=False)
-    
-    all_generated_signals = []
-    signal_component_descriptions = [] # 用于图表标题的更详细描述
-    first_base_freq_input = None # 用于 plot_results 的 base_freq_actual
 
+    # 初始化一个空列表，用于存储所有生成的信号分量
+    all_generated_signals = []
+    # 初始化一个空列表，用于存储每个信号分量的描述信息
+    signal_component_descriptions = []
+    # 初始化变量，用于存储用户输入的第一个基频，供后续绘图参考
+    first_base_freq_input = None
+
+    # 设置循环标志，控制是否继续添加信号分量
     keep_adding_signals = True
+    # 初始化信号分量的计数器
     component_count = 1
 
+    # 开始循环，让用户输入多个信号分量的参数
     while keep_adding_signals:
+        # 打印当前正在输入的信号分量序号
         print(f"\n--- 请输入第 {component_count} 个信号分量的参数 ---")
+        # 使用try-except块处理用户输入的潜在错误
         try:
+            # 提示用户输入基频，并提供默认值
             user_base_freq_str = input(f"  基频 (Hz) [默认 5.0]: ")
+            # 如果用户输入了值，则转换为浮点数；否则使用默认值5.0
             base_freq = float(user_base_freq_str) if user_base_freq_str else 5.0
+            # 如果是第一个分量，记录其基频
             if component_count == 1:
-                first_base_freq_input = base_freq # 记录第一个输入的基频
+                first_base_freq_input = base_freq
 
+            # 提示用户输入此分量上的噪声均值，并提供默认值
             user_noise_mean_str = input(f"  此分量上的噪声均值 [默认 0.0]: ")
+            # 如果用户输入了值，则转换为浮点数；否则使用默认值0.0
             noise_mean = float(user_noise_mean_str) if user_noise_mean_str else 0.0
 
+            # 提示用户输入此分量上的噪声标准差，并提供默认值
             user_noise_std_str = input(f"  此分量上的噪声标准差 [默认 0.1]: ")
+            # 如果用户输入了值，则转换为浮点数；否则使用默认值0.1
             noise_std = float(user_noise_std_str) if user_noise_std_str else 0.1
+            # 检查噪声标准差是否为负，如果是，则重置为0.1并提示用户
             if noise_std < 0:
                 noise_std = 0.1
                 print("  标准差不能为负,已设为0.1")
 
+        # 捕获因无效输入（如非数字）导致的ValueError
         except ValueError:
+            # 打印错误提示，告知用户将使用默认参数
             print("  输入无效，请使用数字。将使用默认参数。")
+            # 设置基频为默认值5.0
             base_freq = 5.0
+            # 如果是第一个分量，记录其默认基频
             if component_count == 1:
                 first_base_freq_input = base_freq
+            # 设置噪声均值为默认值0.0
             noise_mean = 0.0
+            # 设置噪声标准差为默认值0.1
             noise_std = 0.1
-        
-        component_desc = f"F={base_freq}Hz (Amp={SIGNAL_AMPLITUDE}, NoiseMean={noise_mean}, NoiseStd={noise_std})"
-        print(f"  添加分量: {component_desc}")
-        
-        clean_component = SIGNAL_AMPLITUDE * np.sin(2 * np.pi * base_freq * time_axis_common)
-        noise_component = np.random.normal(noise_mean, noise_std, NUM_SAMPLES)
-        current_signal_component = clean_component + noise_component
-        
-        all_generated_signals.append(current_signal_component)
-        signal_component_descriptions.append(component_desc) 
 
-        if component_count >= 1: # 至少有一个分量后再询问
+        # 构建当前信号分量的描述字符串
+        component_desc = f"F={base_freq}Hz (Amp={SIGNAL_AMPLITUDE}, NoiseMean={noise_mean}, NoiseStd={noise_std})"
+        # 打印已添加分量的信息
+        print(f"  添加分量: {component_desc}")
+
+        # 生成纯净的正弦信号分量
+        clean_component = SIGNAL_AMPLITUDE * np.sin(2 * np.pi * base_freq * time_axis_common)
+        # 生成符合正态分布的噪声分量
+        noise_component = np.random.normal(noise_mean, noise_std, NUM_SAMPLES)
+        # 将纯净信号和噪声叠加，得到当前的信号分量
+        current_signal_component = clean_component + noise_component
+
+        # 将当前生成的信号分量添加到列表中
+        all_generated_signals.append(current_signal_component)
+        # 将当前信号分量的描述添加到列表中
+        signal_component_descriptions.append(component_desc)
+
+        # 至少有一个分量后，询问用户是否继续添加
+        if component_count >= 1:
+            # 获取用户输入，转换为小写，并提供默认值'y'
             add_another = input("是否添加下一个信号分量? (y/n) [y]: ").lower()
+            # 如果用户输入'n'，则停止添加信号分量
             if add_another == 'n':
                 keep_adding_signals = False
+        # 增加信号分量计数器
         component_count += 1
 
+    # 检查是否生成了任何信号分量
     if not all_generated_signals:
+        # 如果没有生成信号，打印提示信息并退出程序
         print("没有生成任何信号分量，程序退出。")
         return
 
     # 1. 信号叠加 (混频)
+    # 打印当前处理步骤的标题
     print("\n[1. 信号叠加]")
+    # 将所有生成的信号分量沿axis=0（即逐点）相加，得到混合信号
     original_signal_mixed = np.sum(all_generated_signals, axis=0)
+    # 打印叠加完成的信息和混合信号的点数
     print(f"  所有信号分量已叠加。总点数: {len(original_signal_mixed)}")
-    mixed_signal_composition_str = " + ".join([s.split(' (')[0] for s in signal_component_descriptions]) # 简短描述
-
+    # 创建混合信号组成的简短描述字符串，用于图表标题
+    mixed_signal_composition_str = " + ".join([s.split(' (')[0] for s in signal_component_descriptions])
 
     # 2. 滤波处理 (对叠加后的信号)
+    # 打印当前处理步骤的标题
     print("\n[2. 滤波器模块]")
+    # 调用butter_bandpass_filter函数对叠加后的信号进行带通滤波
     filtered_signal_mixed = butter_bandpass_filter(
-        data=original_signal_mixed,
-        lowcut=LOWCUT_FREQ,
-        highcut=HIGHCUT_FREQ,
-        fs=SYSTEM_FS,
-        order=FILTER_ORDER
+        data=original_signal_mixed,  # 输入的原始混合信号
+        lowcut=LOWCUT_FREQ,  # 低截止频率
+        highcut=HIGHCUT_FREQ,  # 高截止频率
+        fs=SYSTEM_FS,  # 采样率
+        order=FILTER_ORDER  # 滤波器阶数
     )
+    # 打印滤波完成的信息和滤波后信号的点数
     print(f"  叠加信号已滤波 (数据点数: {len(filtered_signal_mixed)})")
 
     # 3. 频谱分析 (对滤波后的叠加信号)
+    # 打印当前处理步骤的标题
     print("\n[3. 频谱分析模块]")
+    # 调用compute_power_spectrum函数计算滤波后信号的功率谱
     frequencies, power_spectrum = compute_power_spectrum(
-        signal=filtered_signal_mixed,
-        fs=SYSTEM_FS
+        signal=filtered_signal_mixed,  # 输入的滤波后信号
+        fs=SYSTEM_FS  # 采样率
     )
+    # 打印频谱计算完成的信息和频率点数
     print(f"  频域数据已计算 (频率点数: {len(frequencies)})")
 
     # 4. 峰值检测 (对滤波后的叠加信号的频谱)
+    # 打印当前处理步骤的标题
     print("\n[4. 峰值检测模块]")
+    # 准备用于峰值检测的频谱数据（功率谱和对应的频率）
     spectrum_data_for_peaks = (power_spectrum, frequencies)
+    # 调用detect_peaks函数检测功率谱中的峰值
     peak_indices, detected_frequencies_list, _ = detect_peaks(
-        spectrum_data_for_peaks,
-        threshold_ratio=PEAK_THRESHOLD_RATIO
+        spectrum_data_for_peaks,  # 频谱数据
+        threshold_ratio=PEAK_THRESHOLD_RATIO  # 峰值检测阈值比例
     )
-    
+
+    # 初始化峰值信息的字符串，默认为未检测到峰值
     peak_info_for_console_and_plot = "未检测到显著峰值"
+    # 如果检测到了峰值频率
     if detected_frequencies_list:
+        # 格式化检测到的峰值频率列表，保留两位小数
         formatted_freqs = [f"{f:.2f}" for f in detected_frequencies_list]
+        # 更新峰值信息字符串
         peak_info_for_console_and_plot = f"检测到的峰值频率: {', '.join(formatted_freqs)} Hz"
+    # 打印峰值检测结果，替换英文描述为中文
     print(f"  {peak_info_for_console_and_plot.replace('Detected peaks at frequencies:', '检测到的峰值频率:')}")
 
-
     # 5. 最终可视化模块调用 (单一综合图)
+    # 打印当前处理步骤的标题
     print("\n[5. 可视化模块]")
+    # 打印准备可视化的信息
     print("  准备最终可视化结果...")
-    
+
+    # 构建主图表的标题，包含混合信号的组成信息
     plot_main_title = f"混合信号分析: [{mixed_signal_composition_str}]"
+    # 构建滤波器信息的字符串
     plot_filter_info = f"滤波器: {LOWCUT_FREQ}-{HIGHCUT_FREQ}Hz, {FILTER_ORDER}阶"
-    plot_peak_info = f"峰值检测阈值: {PEAK_THRESHOLD_RATIO*100:.0f}% | {peak_info_for_console_and_plot.replace('Detected peaks at frequencies:', '检测结果:')}"
-    
+    # 构建峰值检测信息的字符串，包含阈值和检测结果
+    plot_peak_info = f"峰值检测阈值: {PEAK_THRESHOLD_RATIO * 100:.0f}% | {peak_info_for_console_and_plot.replace('Detected peaks at frequencies:', '检测结果:')}"
+
+    # 合并滤波器信息和峰值检测信息为完整的副标题
     full_subtitle_info = f"{plot_filter_info}\n{plot_peak_info}"
-    
+
+    # 调用plot_results函数生成并显示包含所有分析结果的图表
     fig = plot_results(
-        time_axis=time_axis_common,
-        original_signal=original_signal_mixed,
-        filtered_signal=filtered_signal_mixed,
-        frequencies=frequencies,
-        power_spectrum=power_spectrum,
-        peak_indices=peak_indices,
-        base_freq_actual=first_base_freq_input, # 显示第一个输入分量的基频作为参考
-        signal_label=plot_main_title, 
-        filter_info_str=full_subtitle_info,
-        fs_for_plot=SYSTEM_FS
+        time_axis=time_axis_common,  # 时间轴数据
+        original_signal=original_signal_mixed,  # 原始叠加信号
+        filtered_signal=filtered_signal_mixed,  # 滤波后的叠加信号
+        frequencies=frequencies,  # 频率轴数据
+        power_spectrum=power_spectrum,  # 功率谱数据
+        peak_indices=peak_indices,  # 检测到的峰值索引
+        base_freq_actual=first_base_freq_input,  # 第一个输入分量的基频，用于参考
+        signal_label=plot_main_title,  # 图表主标题
+        filter_info_str=full_subtitle_info,  # 图表副标题 (包含滤波器和峰值信息)
+        fs_for_plot=SYSTEM_FS  # 采样率，供绘图模块使用
     )
 
+    # 打印所有处理和图形创建完毕的信息
     print("\n--- 所有处理和图形创建完毕 ---")
-    if fig: # 检查fig是否成功创建
+    # 检查图表对象fig是否成功创建
+    if fig:
+        # 打印调用plt.show()的信息
         print("调用 plt.show() 来显示图形...")
-        plt.show(block=False) 
-        input("按 Enter 键结束程序并关闭图形...") 
-        plt.close('all') 
+        # 显示图表，block=False表示非阻塞模式，程序会继续执行
+        plt.show(block=False)
+        # 提示用户按Enter键结束程序并关闭图形
+        input("按 Enter 键结束程序并关闭图形...")
+        # 关闭所有matplotlib图形窗口
+        plt.close('all')
+        # 如果未能生成图表
     else:
+        # 打印未能生成图形的提示
         print("未能生成可视化图形。")
-        
+
+    # 打印程序结束信息
     print("程序结束。")
 
 
+# Python的入口点检查，确保main()函数只在直接运行此脚本时执行
 if __name__ == "__main__":
+    # 调用主函数
     main()
